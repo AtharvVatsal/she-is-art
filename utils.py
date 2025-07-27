@@ -10,8 +10,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def _load_style_model(path: str) -> torch.nn.Module:
     """
     Load a style model from path. 
-    Try TorchScript first; if that fails, load state_dict & script it.
-    Cached for subsequent calls.
+    Try TorchScript first; if that fails, load state_dict, clean it, & script it.
     """
     try:
         model = torch.jit.load(path).to(DEVICE)
@@ -20,8 +19,15 @@ def _load_style_model(path: str) -> torch.nn.Module:
     except Exception:
         # Fallback: raw state_dict
         state_dict = torch.load(path, map_location=DEVICE)
+
+        # Remove running stats from InstanceNorm layers
+        cleaned = {
+            k: v for k, v in state_dict.items()
+            if not (k.endswith('running_mean') or k.endswith('running_var'))
+        }
+
         net = TransformerNet()
-        net.load_state_dict(state_dict)
+        net.load_state_dict(cleaned, strict=False)
         net.eval()
         scripted = torch.jit.script(net).to(DEVICE)
         return scripted
