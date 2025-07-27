@@ -9,22 +9,20 @@ class ConvLayer(nn.Module):
         super().__init__()
         pad = k // 2
         self.reflection_pad = nn.ReflectionPad2d(pad)
-        # key here must be "conv2d" to match the state_dict
         self.conv2d = nn.Conv2d(in_c, out_c, k, stride)
 
     def forward(self, x):
-        x = self.reflection_pad(x)
-        return self.conv2d(x)
+        return self.conv2d(self.reflection_pad(x))
 
 class ResidualBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
+        # Turn on running stats to match old checkpoints
         self.conv1 = ConvLayer(channels, channels, 3, 1)
-        # InstanceNorm2d by default track_running_stats=False
-        self.in1 = nn.InstanceNorm2d(channels, affine=True)
+        self.in1   = nn.InstanceNorm2d(channels, affine=True, track_running_stats=True)
         self.conv2 = ConvLayer(channels, channels, 3, 1)
-        self.in2 = nn.InstanceNorm2d(channels, affine=True)
-        self.relu = nn.ReLU()
+        self.in2   = nn.InstanceNorm2d(channels, affine=True, track_running_stats=True)
+        self.relu  = nn.ReLU()
 
     def forward(self, x):
         residual = x
@@ -38,41 +36,38 @@ class UpsampleConvLayer(nn.Module):
         self.upsample = upsample
         pad = k // 2
         self.reflection_pad = nn.ReflectionPad2d(pad)
-        # again must be conv2d
         self.conv2d = nn.Conv2d(in_c, out_c, k, stride)
 
     def forward(self, x):
         if self.upsample:
             x = F.interpolate(x, scale_factor=self.upsample, mode='nearest')
-        x = self.reflection_pad(x)
-        return self.conv2d(x)
+        return self.conv2d(self.reflection_pad(x))
 
 class TransformerNet(nn.Module):
     def __init__(self):
         super().__init__()
-        # initial conv layers
-        self.conv1 = ConvLayer(3,  32, 9, 1)
-        self.in1   = nn.InstanceNorm2d(32, affine=True)
+        # Initial conv layers
+        self.conv1 = ConvLayer(3, 32, 9, 1)
+        self.in1   = nn.InstanceNorm2d(32, affine=True, track_running_stats=True)
         self.conv2 = ConvLayer(32, 64, 3, 2)
-        self.in2   = nn.InstanceNorm2d(64, affine=True)
+        self.in2   = nn.InstanceNorm2d(64, affine=True, track_running_stats=True)
         self.conv3 = ConvLayer(64,128, 3, 2)
-        self.in3   = nn.InstanceNorm2d(128, affine=True)
+        self.in3   = nn.InstanceNorm2d(128, affine=True, track_running_stats=True)
         self.relu  = nn.ReLU()
 
-        # residual blocks
+        # Residuals
         self.res1 = ResidualBlock(128)
         self.res2 = ResidualBlock(128)
         self.res3 = ResidualBlock(128)
         self.res4 = ResidualBlock(128)
         self.res5 = ResidualBlock(128)
 
-        # upsampling layers **must** be named deconv1/deconv2/deconv3
+        # Upsampling (must use deconv naming to match checkpoints)
         self.deconv1 = UpsampleConvLayer(128, 64, 3, 1, upsample=2)
-        self.in4     = nn.InstanceNorm2d(64, affine=True)
-        self.deconv2 = UpsampleConvLayer(64,  32, 3, 1, upsample=2)
-        self.in5     = nn.InstanceNorm2d(32, affine=True)
-        # final “deconv3” is actually just a ConvLayer
-        self.deconv3 = ConvLayer(32,  3, 9, 1)
+        self.in4     = nn.InstanceNorm2d(64, affine=True, track_running_stats=True)
+        self.deconv2 = UpsampleConvLayer(64, 32, 3, 1, upsample=2)
+        self.in5     = nn.InstanceNorm2d(32, affine=True, track_running_stats=True)
+        self.deconv3 = ConvLayer(32, 3, 9, 1)
 
     def forward(self, x):
         y = self.relu(self.in1(self.conv1(x)))
